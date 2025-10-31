@@ -1,0 +1,7 @@
+services:
+  jupyterlab:
+    image: qualifying-exam-code-dockerimage
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./:/qualifying-exam-code
