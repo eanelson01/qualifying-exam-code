@@ -1,3 +1,14 @@
-numpy==1.23.2
-pandas==2.0.3
-jupyterlab==4.0.5
+# General packages
+numpy==2.3.4
+pandas==2.3.3 
+jupyterlab==4.4.10
+
+# Plotting packages
+# matplotlib==3.5.0 # General visualizations
+seaborn==0.13.2 # Heatmaps
+plotly==5.24.1 # Network Graph Images
+kaleido==0.2.1 # For saving plotly graphics
+
+# Packages for Analysis
+pysindy==2.0.0 # PySindy for fitting the model
+# pykoopman==1.1.0 # PyKoopman for koopman operators. Can be used to implement HAVOK. I will end up testing different models., there's a conflict with the version of NUMPY
