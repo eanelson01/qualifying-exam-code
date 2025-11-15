@@ -1,0 +1,52 @@
+# A file to hold parameter values for the simulation
+general:
+    seed: 2302 # The seed for the whole file for reproducibility
+    n: 150 # The number of neurons in the simulation
+    n_dim: 2 # The number of dimensions that the axons live on 
+    radius: 4000 # The width of each axis in the physical dimension
+    distance_connection_probability_exponent_constant: 20 # The exponent for the exponential decay of connection proabbility for the neurons based on distance. 
+    n_per_group: 100
+    module_std: 0.1
+    num_rich_club_neurons_per_module: 1  # Number of rich club neurons per module
+    number_of_rich_club_neurons_to_stimulate: 1 # The number of rich club neurons to stimulate
+    q: 0 # The firing rate for the amount of external noise randomly applied to the network
+    injected_current_decay_parameter: 0.02 # Based on a time constant of 5 ms
+    constant_weight_value: 0.10 # What the constant weight value should be if every edge has the same connection weight
+    x1_mean: 0.9
+    x2_mean: 0.6
+    x3_mean: 0.9
+    y1_mean: 0.3
+    y2_mean: 0.6
+    y3_mean: 0.9
+    mean_weight_val: 0.5 # 0.3 # Mean value for weights
+    std_weight_val: 0.05 # Std for weights
+    constant_connection_probability: 0.03 # A constant connection probability if distance doesn't constrain connections
+    gaussian_filter_sigma: 25 # The sigma value for the gaussian filter
+
+timing:
+    num_time_steps: 10000 # The number of discrete time steps to run the network for.
+    t_step_size: 1E-4 # The amount of time that passes for each time step, in seconds. Later converted to ms.
+    noise_injected_current_amount: 15 # The amount of injected current to add for random noise paramerter
+    
+izhikevich:
+    rmv: -70 # The resting membrane potential for neurons
+    default_a: 0.02 # The default value for the Izhikevich a parameter
+    default_b: 0.2 # The default value for the Izhikevich b parameter
+    default_c: -65 # The default value for the Izhikevich c parameter
+    default_d: 8 # The default value for the Izhikevich d parameter
+    highest_injected_current: 15 # The highiest amount of injected current that is given to a neuron through edges
+    superthreshold_injected_current: 15 # The highest injected current as a result of external stimulation
+    
+electrical-parameters:
+    rushton_constant: 80 # The constant to determine what the myelin length should be.
+    allometric_scaling_exponent: 0.102 # 0.25
+    
+g-ratio:
+    unmyelinated_gratio: 0.95 # The g-ratio value for unmyelinated neurons. If 1, the function is undefined.
+    gratio_sd: 0.1 # The standard deviation of the g-ratio.
+    gratio_lower_bound: 0.55 # The lowest a randomly drawn g-ratio can go
+    theta_scalar_myelin: 0.005 #5 # How much to scale the theta by, theta is multiplied by this value to speed it, was 10 for reinforcement learning
+    theta_scalar_non_myelin: 0.005 # 2 # How much to scale thetat by, theta is divided by this value to slow it
+    gratio_threshold: 2 # The axonal diameter when a neuron is myelinated. Cutoff comes from Rushton (1951). 
+    unmyelinated_constant_diameter: 0.3 # Internal diameter for unmyelinated axons if constant
+    myelinated_constant_diamteter: 2 # Internal diameter for myelinated axons if constant, coming from Shadlow (2012)
