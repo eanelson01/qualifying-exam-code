@@ -6,6 +6,7 @@ import yaml
 import scipy.stats as stats
 from collections import namedtuple
 from scipy.ndimage import gaussian_filter1d
+from brian2 import *
 
 # Own imports
 from visualizations import *
@@ -760,6 +761,127 @@ def SimulateNeurons(
 
     return out
 
+def Brian2SimulateNeurons(
+    pos_array,
+    edges,
+    config_dict,
+    weights, 
+    implement_timing,
+    time_to_complete_ap,
+    constant_injected_current_index,
+):
+    '''
+    A function to use the Brian2 Simulation method for 
+    '''
+
+    start_scope()
+
+    # Changing the default clock so that the dt is 0.01 instead of 0.1
+    num_time_steps = 100000
+    dt = 0.01
+    defaultclock.dt = dt*ms
+    n = pos_array.shape[0]
+    
+    # Excitatory Parameters
+    spike_threshold = 30*mV
+    a = 0.02/ms
+    b = 0.2/ms
+    c = -65*mV
+    d = 8*mV/ms
+    
+    # Conductance changes
+    # Values for these conductances taken from https://brian2.readthedocs.io/en/stable/examples/frompapers.Stimberg_et_al_2018.example_1_COBA.html
+    E_e = 0*mV 
+    E_i = -80*mV 
+    tau_e = 5*ms
+    tau_i = 10*ms
+    tau_r = 5*ms # A refractory period
+    C_m = 198*pF           # Membrane capacitance
+    w_e = 23*nS # 0.05*nS          # Excitatory synaptic conductance
+    w_i = 20*nS # 1.0*nS           # Inhibitory synaptic conductance
+        
+    eqs = '''
+    dv/dt = (0.04/ms/mV)*v**2+(5/ms)*v+140*mV/ms-u+ (I_syn+I_ext) / C_m: volt
+    du/dt = a*(b*v-u) : volt/second 
+    I_syn = g_e * (E_e - v) + g_i * (E_i - v) : amp
+    dg_e/dt = -g_e / tau_e: siemens
+    dg_i/dt = -g_i / tau_i: siemens
+    I_ext : amp
+    '''
+    
+    # The reset of the dynamics after a spike
+    reset = '''
+    v = c
+    u = u + d
+    '''
+    
+    # Creating the network
+    G = NeuronGroup(n, eqs, threshold=f'v >= spike_threshold', reset=reset, method='euler')
+    G.v = c # Setting the resting potentials
+    G.u = b * G.v # Setting the resting value of u
+    G.g_e = 0*nS # Setting the deaful
+    G.g_i = 0*nS 
+    
+    # Set up dynamic clipping, don't want the conductance values to reach unrealisitc values
+    G.run_regularly('g_e = clip(g_e, 0*nS, 30*nS)', dt=defaultclock.dt)
+    G.run_regularly('g_i = clip(g_i, 0*nS, 50*nS)', dt=defaultclock.dt)
+
+    # Apply injected current to neurons
+    # np.random.seed(constant_injected_current_index_seed)
+    # constant_injected_current_index = np.random.choice(
+    #     np.arange(n), num_neurons_to_stimluate, 
+    #     replace = False
+    # )
+
+    # Set external activity, equivalent to 7.5 mV
+    G.I_ext = 0*pA
+    G.I_ext[constant_injected_current_index] = 1485*pA
+    
+    # Creating synapses
+    if not implement_timing:
+        S = Synapses(G, G, '''w : 1''', on_pre='g_e_post += w*w_e')
+        S.connect(i = edges[:, 0], j = edges[:, 1])
+
+    # When adding conductance delays
+    if implement_timing:
+
+        if time_to_complete_ap is None:
+            time_to_complete_ap = PosArray_to_SignalTiming(
+                pos_array, edges, config_dict, 
+                constant_diameter = False, myelinated_index = None
+            )
+    
+        # Have to change the results so that the timings are on correct scale
+        time_to_complete_ap = (time_to_complete_ap) * ms
+    
+        # Create the synapses
+        S = Synapses(G, G, '''w : 1''', on_pre='g_e_post += w*w_e')
+        S.connect(i = edges[:, 0], j = edges[:, 1])
+    
+        # Implement conduction delays
+        S.delay = time_to_complete_ap
+
+    # Implement the weights
+    S.w = weights[edges[:, 0], edges[:, 1]]
+    
+    # group.v = 'rand()'
+    state = StateMonitor(G, 'v', record = True)
+    
+    # Run a network
+    run(num_time_steps*dt*ms)
+    
+    # Way to get the voltages out and make them 
+    voltages = np.array(state.v.T) * 1000 # Sending to mV instead of Volts
+    
+    # Create the out named tuple
+    out = CreateNamedTuple(
+        voltages,
+        t_step_size = dt,
+        num_time_steps = num_time_steps
+    )
+    
+    return out
+
 def FullSimulation(
     config_dict,
     array_id,
@@ -814,7 +936,8 @@ def FullSimulation(
     num_time_steps_with_injection = None,
     constant_diameter = False,
     superthreshold_injected_current = 15,
-    weight_rich_club_connections_more = False
+    weight_rich_club_connections_more = False,
+    Brian2Implementation = False
 ):
     '''
     A function to generate positions array, caculate distance matrix, and simluate the neurons.
@@ -906,36 +1029,49 @@ def FullSimulation(
             module_linking_neurons = np.array([0, n_per_group, n_per_group*2])
             weight_adjustement[module_linking_neurons, :] /= weight_adjustement[module_linking_neurons, :] # Set these all to 1 so that they have the maximum weight
 
-        
-        
     # Simluate the neurons
-    out = SimulateNeurons(
-        pos_array = pos_array,
-        edges = edges,
-        weights = A * weight_adjustement,
-        num_time_steps = num_time_steps,
-        time_to_complete_ap = time_to_complete_ap,
-        q = q, # Random process added in
-        constant_injected_current_index = constant_injected_current_index,
-        vary_neuron_type = vary_neuron_type,
-        resting_voltage = resting_voltage,
-        default_a = default_a,
-        default_b = default_b,
-        default_c = default_c,
-        default_d = default_d,
-        superthreshold_injected_current = superthreshold_injected_current,
-        highest_injected_current = highest_injected_current,
-        t_step_size = t_step_size,
-        injected_current_decay_parameter = injected_current_decay_parameter,
-        diagnostic_printing = diagnostic_printing,
-        num_time_steps_with_injection = num_time_steps_with_injection
-    )
-
+    if not Brian2Implementation:
+        out = SimulateNeurons(
+            pos_array = pos_array,
+            edges = edges,
+            weights = A * weight_adjustement,
+            num_time_steps = num_time_steps,
+            time_to_complete_ap = time_to_complete_ap,
+            q = q, # Random process added in
+            constant_injected_current_index = constant_injected_current_index,
+            vary_neuron_type = vary_neuron_type,
+            resting_voltage = resting_voltage,
+            default_a = default_a,
+            default_b = default_b,
+            default_c = default_c,
+            default_d = default_d,
+            superthreshold_injected_current = superthreshold_injected_current,
+            highest_injected_current = highest_injected_current,
+            t_step_size = t_step_size,
+            injected_current_decay_parameter = injected_current_decay_parameter,
+            diagnostic_printing = diagnostic_printing,
+            num_time_steps_with_injection = num_time_steps_with_injection
+        )
+        
+    else:
+        out = Brian2SimulateNeurons(
+            pos_array = pos_array,
+            edges = edges,
+            config_dict = config_dict,
+            weights = A * weight_adjustement, 
+            implement_timing = implement_timing,
+            time_to_complete_ap = time_to_complete_ap,
+            constant_injected_current_index = constant_injected_current_index,
+        )
+        
     # Save the files associated with it
     if save_outputs:
-        np.savetxt(f'outputs/voltages/voltages-array-id-{array_id}.csv', out.voltages, delimiter = ',') # Voltages
-        np.savetxt(f'outputs/spikes/spikes-array-id-{array_id}.csv', out.spikes, delimiter = ',') # Spikes
-        np.savetxt(f'outputs/injected-current/injected-current-array-id-{array_id}.csv', out.injected_current, delimiter = ',') # Injected current
+        if not Brian2Implementation:
+            np.savetxt(f'outputs/voltages/voltages-array-id-{array_id}.csv', out.voltages, delimiter = ',') # Voltages
+            np.savetxt(f'outputs/spikes/spikes-array-id-{array_id}.csv', out.spikes, delimiter = ',') # Spikes
+            np.savetxt(f'outputs/injected-current/injected-current-array-id-{array_id}.csv', out.injected_current, delimiter = ',') # Injected current
+        else:
+            np.savetxt(f'updated-outputs/voltages/voltages-array-id-{array_id}.csv', out.voltages, delimiter = ',')
 
     if visualize_spike_trace:
         PlotSpikeTrace(
@@ -1060,3 +1196,146 @@ def PCA(out, num_dim_pca, gaussian_filter_sigma = None, on_derivative = True):
         x_reduced = x @ projection_vecs
 
     return x_reduced, eig, eig_vecs
+
+# Need a way to get the NamedTuple back
+def CreateNamedTuple(
+    voltages,
+    t_step_size, # Make sure in ms
+    num_time_steps
+):
+    SimulationResults = namedtuple(
+        'SimulationResults', 
+        [
+            'voltages', 'us', 'injected_current',
+            'spikes', 'q', 'num_time_steps', 't_step_size',
+            't_index'
+        ]
+    )
+
+    out = SimulationResults(
+        voltages = voltages,
+        us = None,
+        injected_current = None,
+        spikes = None,
+        q = None,
+        num_time_steps = num_time_steps,
+        t_step_size = t_step_size,
+        t_index = None
+    )
+
+    return out
+
+def GenerateNetworkTuple(
+    config_dict,
+    implement_nueron_modules_positions,
+    n_dim,
+    radius,
+    n,
+    n_per_group,
+    seed,
+    module_std,
+    x1_mean,
+    x2_mean,
+    x3_mean,
+    y1_mean,
+    y2_mean,
+    y3_mean,
+    implement_neuron_modules_connections,
+    adjacency_matrix_path,
+    network_graph_path,
+    distance_connection_probability_exponent_constant,
+    num_rich_club_neurons_per_module,
+    visualize_adjacency_matrix,
+    visualize_connected_network,
+    constant_connection_probability,
+    implement_timing,
+    constant_diameter,
+    implement_constant_weights,
+    constant_weight_value,
+    mean_weight_val,
+    std_weight_val,
+    num_groups = 3,
+    check_distance_matrix_symmetry = False
+):
+    
+    # Define the positions array
+    pos_array = GeneratePosArray(
+            implement_nueron_modules_positions,
+            n_dim = n_dim,
+            radius = radius,
+            n = n,
+            num_groups = num_groups,
+            n_per_group = n_per_group,
+            seed = seed,
+            std = module_std,
+            x1_mean = x1_mean, 
+            x2_mean = x2_mean,
+            x3_mean = x3_mean,
+            y1_mean = y1_mean,
+            y2_mean = y2_mean,
+            y3_mean = y3_mean, 
+    )
+
+    # Re-introduce n into the scope in case modules have been created
+    n = pos_array.shape[0]
+
+    # Calculate the euclidean distance between all nodes
+    distance_matrix = GetDistanceMatrix(
+        pos_array = pos_array,
+        n_dim = n_dim,
+        check_symmetry = check_distance_matrix_symmetry
+    )
+
+    # Define the adjacency matrix and edges of the network
+    A, edges, rich_club_neurons = GetAdjacencyMatrix(
+        implement_neuron_modules_connections = implement_neuron_modules_connections,
+        distance_matrix = distance_matrix,
+        pos_array = pos_array,
+        radius = radius,
+        n_dim = n_dim,
+        adjacency_matrix_path = adjacency_matrix_path,
+        network_graph_path = network_graph_path,
+        n_per_group = n_per_group,
+        num_groups = num_groups,
+        distance_connection_probability_exponent_constant = distance_connection_probability_exponent_constant,
+        num_rich_club_neurons_per_module = num_rich_club_neurons_per_module,
+        visualize_adjacency_matrix = visualize_adjacency_matrix,
+        visualize_connected_network = visualize_connected_network,
+        constant_connection_probability = constant_connection_probability
+    )
+
+    if implement_timing:
+        # Find axons that should be myelinated if constant diameter
+        myelinated_index = np.zeros(edges.shape[0])
+
+        # Myelinated the signals between modules
+        if implement_neuron_modules_connections:
+            mod_1_to_2 = np.argwhere(np.logical_and(edges[:,0] == 0, edges[:, 1] == n_per_group)).flatten()
+            mod_2_to_3 = np.argwhere(np.logical_and(edges[:,0] == n_per_group, edges[:, 1] == n_per_group*2)).flatten()
+            mode_3_to_2 = np.argwhere(np.logical_and(edges[:,0] == n_per_group*3, edges[:, 1] == 0)).flatten()
+    
+            myelinated_index[mod_1_to_2] = 1
+            myelinated_index[mod_2_to_3] = 1
+            myelinated_index[mode_3_to_2] = 1
+        
+        time_to_complete_ap = PosArray_to_SignalTiming(
+            pos_array, edges, config_dict, 
+            constant_diameter, myelinated_index
+        )
+    else:
+        time_to_complete_ap = None
+    
+    if implement_constant_weights:
+        weight_adjustement = np.ones((n,n)) * constant_weight_value
+    else:
+        weight_adjustement = np.random.normal(loc = mean_weight_val, scale = std_weight_val, size = (n,n))
+
+    # Create a named tuple for the network itself
+    NetworkTuple = namedtuple('NetworkTuple', ['pos_array', 'edges', 'A', 'time_to_complete_ap'])
+    
+    return NetworkTuple(pos_array = pos_array, edges = edges, A = A, time_to_complete_ap = time_to_complete_ap)
+
+    
+
+    
+    
